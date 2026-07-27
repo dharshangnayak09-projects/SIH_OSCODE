@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+
+ml/dataset/creditcard.csv
+
+transactions.db
+edge_layer/transactions.db
+
+edge_layer/logs/
