@@ -165,6 +165,6 @@ for feat, imp in importances:
     print(f"  {feat:40s} {imp:.4f}")
 
 with open("fraud_model_improved.pkl", "wb") as f:
-    pickle.dump({"model": final_model, "threshold": float(chosen_threshold), "features": FEATURES}, f)
+    pickle.dump({"threshold": float(chosen_threshold), "features": FEATURES}, f)
 
 print("\nSaved improved model to fraud_model_improved.pkl")

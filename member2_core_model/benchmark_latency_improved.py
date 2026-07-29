@@ -7,7 +7,6 @@ import xgboost as xgb
 with open("fraud_model_improved.pkl", "rb") as f:
     bundle = pickle.load(f)
 
-model = bundle["model"]
 features = bundle["features"]
 threshold = bundle["threshold"]
 
@@ -36,12 +35,21 @@ for f in features:
 
 sample_rows = df_encoded[features].sample(500, random_state=1).values.astype(np.float32)
 
-# Re-fit on plain numpy arrays (no column names) for ONNX compatibility
+# Retrain with the CONFIRMED best hyperparameters from train_model_improved.py's
+# hyperparameter search (depth=3, n_est=100, lr=0.1, reg_lambda=1.0, reg_alpha=0.0).
+# No dependency on a pickled model object - just the numbers, hardcoded here to
+# match what train_model_improved.py already printed and validated via CV.
 X_all = df_encoded[features].values.astype(np.float32)
 y_all = df_encoded["is_fraud"].values
-model_np = xgb.XGBClassifier(**{k: v for k, v in model.get_params().items() if k != "early_stopping_rounds"})
-model_np.fit(X_all, y_all)
-model = model_np
+neg, pos = (y_all == 0).sum(), (y_all == 1).sum()
+
+model = xgb.XGBClassifier(
+    max_depth=3, n_estimators=100, learning_rate=0.1,
+    reg_lambda=1.0, reg_alpha=0.0,
+    scale_pos_weight=neg / pos, eval_metric="aucpr",
+    tree_method="hist", random_state=42
+)
+model.fit(X_all, y_all)
 
 # ---------- Benchmark 1: raw XGBoost ----------
 latencies = []
