@@ -4,7 +4,7 @@ import time
 import pandas as pd
 import xgboost as xgb
 
-with open("fraud_model_member1_real.pkl", "rb") as f:
+with open("fraud_model_improved.pkl", "rb") as f:
     bundle = pickle.load(f)
 
 model = bundle["model"]
@@ -39,7 +39,7 @@ sample_rows = df_encoded[features].sample(500, random_state=1).values.astype(np.
 # Re-fit on plain numpy arrays (no column names) for ONNX compatibility
 X_all = df_encoded[features].values.astype(np.float32)
 y_all = df_encoded["is_fraud"].values
-model_np = xgb.XGBClassifier(**model.get_params())
+model_np = xgb.XGBClassifier(**{k: v for k, v in model.get_params().items() if k != "early_stopping_rounds"})
 model_np.fit(X_all, y_all)
 model = model_np
 
@@ -64,11 +64,11 @@ import onnxruntime as rt
 initial_type = [("float_input", FloatTensorType([None, len(features)]))]
 onnx_model = convert_xgboost(model, initial_types=initial_type, target_opset=12)
 
-with open("fraud_model_member1_real.onnx", "wb") as f:
+with open("fraud_model_improved.onnx", "wb") as f:
     f.write(onnx_model.SerializeToString())
-print("\nSaved ONNX model to fraud_model_member1_real.onnx")
+print("\nSaved ONNX model to fraud_model_improved.onnx")
 
-sess = rt.InferenceSession("fraud_model_member1_real.onnx", providers=["CPUExecutionProvider"])
+sess = rt.InferenceSession("fraud_model_improved.onnx", providers=["CPUExecutionProvider"])
 input_name = sess.get_inputs()[0].name
 label_name = sess.get_outputs()[1].name
 

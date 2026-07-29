@@ -26,8 +26,8 @@ import pickle
 import numpy as np
 import onnxruntime as rt
 
-MODEL_PATH = "fraud_model_member1_real.onnx"
-META_PATH = "fraud_model_member1_real.pkl"
+MODEL_PATH = "fraud_model_improved.onnx"
+META_PATH = "fraud_model_improved.pkl"
 
 with open(META_PATH, "rb") as f:
     _bundle = pickle.load(f)
