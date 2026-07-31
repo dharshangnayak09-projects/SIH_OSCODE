@@ -1,0 +1,28 @@
+﻿venv/
+__pycache__/
+*.pyc
+
+ml/dataset/creditcard.csv
+
+transactions.db
+edge_layer/transactions.db
+
+edge_layer/logs/
+
+# Node / frontend build
+node_modules/
+dist/
+.vite/
+
+# Environment secrets - each dev keeps their own local .env
+.env
+.env.local
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Large training/data CSVs - share via Drive, not git
+Data/*.csv
+data/*.csv
