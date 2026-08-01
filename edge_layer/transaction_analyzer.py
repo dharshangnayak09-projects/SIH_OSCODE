@@ -9,10 +9,21 @@ class TransactionAnalyzer:
     ):
         score = 100
 
-        if amount > 50000:
+        # Proportional amount scoring instead of two coarse buckets - so
+        # different amounts genuinely produce different scores, not just
+        # amounts that cross the 10k/50k thresholds.
+        if amount > 100000:
+            score -= 40
+        elif amount > 50000:
             score -= 30
+        elif amount > 20000:
+            score -= 20
         elif amount > 10000:
-            score -= 15
+            score -= 12
+        elif amount > 5000:
+            score -= 6
+        elif amount > 2000:
+            score -= 2
 
         if new_beneficiary:
             score -= 20

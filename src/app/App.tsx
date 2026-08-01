@@ -1,4 +1,4 @@
-import { useState, useEffect, useContext, createContext, useCallback, useRef } from "react";
+import { useState, useEffect, useContext, createContext, useCallback, useRef, JSX } from "react";
 import {
   Shield, LayoutDashboard, Activity, Search, RefreshCw, Bell,
   ChevronRight, Sun, Moon, ShieldCheck, ShieldAlert, Network,
@@ -20,7 +20,7 @@ const useDark = () => useContext(ThemeCtx);
 // ─── API CONFIG ───────────────────────────────────────────────────────────────
 // Set VITE_API_URL in a .env file (or your hosting provider's env vars) to
 // point at your deployed backend. Defaults to localhost for local dev.
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
+const API_URL = (import.meta as any).env.VITE_API_URL || "http://localhost:8000";
 
 // ─── DATA ─────────────────────────────────────────────────────────────────────
 const RECEIVERS = [
@@ -74,35 +74,39 @@ function mapBackendRow(row: any): typeof TRANSACTIONS[0] {
   };
 }
 
-// Fetches real transactions from the backend on mount. Falls back to the
-// static seed data above if the backend is unreachable, so the dashboard
-// still looks populated when developing the UI without the API running.
+// Fetches real transactions from the backend. Starts empty and stays empty
+// until real payments have been made - no fake seed data shown, ever.
+// Also reports whether the backend is reachable, so the UI can show an
+// honest "backend offline" message instead of silently faking data.
 function useLiveTransactions() {
-  const [data, setData] = useState<typeof TRANSACTIONS>(TRANSACTIONS);
+  const [data, setData] = useState<typeof TRANSACTIONS>([]);
+  const [offline, setOffline] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const refetch = () => {
     fetch(`${API_URL}/transactions`)
       .then((res) => {
         if (!res.ok) throw new Error(`API returned ${res.status}`);
         return res.json();
       })
       .then((rows: any[]) => {
-        if (cancelled) return;
-        if (Array.isArray(rows) && rows.length > 0) {
-          setData(rows.map(mapBackendRow));
-        }
-        // If the backend returns an empty list (no transactions sent yet),
-        // keep showing the seed data rather than an empty dashboard.
+        setOffline(false);
+        setData(Array.isArray(rows) ? rows.map(mapBackendRow).reverse() : []);
       })
       .catch(() => {
-        // Backend not running - keep the seed fallback, no error shown to
-        // the user since this is expected during frontend-only development.
+        setOffline(true);
+        setData([]);
       });
-    return () => { cancelled = true; };
+  };
+
+  useEffect(() => {
+    refetch();
+    // Poll every 4s so the dashboard picks up new payments made from other
+    // tabs/pages without needing a manual refresh.
+    const iv = setInterval(refetch, 4000);
+    return () => clearInterval(iv);
   }, []);
 
-  return data;
+  return { data, offline };
 }
 
 const fraudTrendData = [
@@ -363,28 +367,52 @@ function TopNav({ page, onRefresh }: { page: string; onRefresh: () => void }) {
 function DashboardPage() {
   const ct = useChartTheme();
   const { isDark } = useDark();
-  const TRANSACTIONS = useLiveTransactions();
+  const { data: TRANSACTIONS, offline } = useLiveTransactions();
   const blocked = TRANSACTIONS.filter(t => t.status === "Blocked").length;
   const flagged = TRANSACTIONS.filter(t => t.status === "Flagged").length;
   const safe    = TRANSACTIONS.filter(t => t.status === "Allowed").length;
+  const total   = TRANSACTIONS.length;
+  const fraudCaught = blocked + flagged;
+  const blockedAmount = TRANSACTIONS.filter(t => t.status === "Blocked").reduce((s, t) => s + t.amount, 0);
+
+  if (offline) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center gap-2">
+        <ShieldAlert size={40} className="text-amber-500" />
+        <p className="text-slate-600 dark:text-slate-300 font-semibold">Backend not reachable</p>
+        <p className="text-sm text-slate-400 dark:text-slate-500">
+          Start the API server (uvicorn edge_layer.main:app --port 8000) to see real dashboard data.
+        </p>
+      </div>
+    );
+  }
+
+  if (total === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center gap-2">
+        <Activity size={40} className="text-slate-300 dark:text-slate-600" />
+        <p className="text-slate-600 dark:text-slate-300 font-semibold">No transactions yet</p>
+        <p className="text-sm text-slate-400 dark:text-slate-500">
+          Send a payment from the Payment page - it'll appear here in real time.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: "Total Transactions",   value: "2,84,391", sub: "Last 24h",       icon: Activity,    color: "bg-blue-600",    change: "+12.4%", up: true  },
-          { label: "Fraud Detected",        value: "1,247",    sub: "₹3.8Cr blocked", icon: ShieldAlert, color: "bg-red-500",     change: "+3.2%",  up: false },
-          { label: "Safe Transactions",     value: "2,83,144", sub: "99.56% of total",icon: ShieldCheck, color: "bg-emerald-500", change: "+12.1%", up: true  },
-          { label: "Avg Detection Latency", value: "~1 ms",    sub: "Real-time AI",   icon: Zap,         color: "bg-violet-600",  change: "-0.2ms", up: true  },
-        ].map(({ label, value, sub, icon: Icon, color, change, up }) => (
+          { label: "Total Transactions",   value: total.toLocaleString("en-IN"),         sub: "This session",       icon: Activity,    color: "bg-blue-600" },
+          { label: "Fraud Detected",        value: fraudCaught.toLocaleString("en-IN"),   sub: `₹${blockedAmount.toLocaleString("en-IN")} blocked`, icon: ShieldAlert, color: "bg-red-500" },
+          { label: "Safe Transactions",     value: safe.toLocaleString("en-IN"),          sub: `${total > 0 ? Math.round((safe/total)*100) : 0}% of total`, icon: ShieldCheck, color: "bg-emerald-500" },
+          { label: "Avg Detection Latency", value: "~1 ms",    sub: "Real-time AI",   icon: Zap,         color: "bg-violet-600" },
+        ].map(({ label, value, sub, icon: Icon, color }) => (
           <Card key={label} className="p-5">
             <div className="flex items-start justify-between mb-4">
               <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${color}`}>
                 <Icon size={18} className="text-white" />
               </div>
-              <span className={`flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${up ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" : "bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-400"}`}>
-                {up ? <TrendingUp size={10}/> : <TrendingDown size={10}/>} {change}
-              </span>
             </div>
             <p className="text-2xl font-bold text-slate-800 dark:text-slate-100 leading-none">{value}</p>
             <p className="text-[11px] text-slate-400 dark:text-slate-500 font-mono mt-0.5">{sub}</p>
@@ -496,7 +524,7 @@ function DashboardPage() {
 // SCREEN 2 — UPI PAYMENT SIMULATOR
 // ═══════════════════════════════════════════════════════════════════════════════
 type PayState = "idle" | "scanning" | "result";
-type PayResult = { status: TxStatus; score: number; latency: string; txnId: string } | null;
+type PayResult = { status: TxStatus; score: number; latency: string; txnId: string; error?: string } | null;
 
 function PaymentPage({ onGoAnalysis }: { onGoAnalysis: (txn: typeof TRANSACTIONS[0]) => void }) {
   const [sender] = useState("Arjun Kumar  •  arjun.k@okaxis  •  HDFC xxxx-4821");
@@ -536,10 +564,11 @@ function PaymentPage({ onGoAnalysis }: { onGoAnalysis: (txn: typeof TRANSACTIONS
 
         // Parse the "Name  •  vpa  •  bank" display string for sender fields.
         const [senderName, senderVpa] = sender.split("•").map(s => s.trim());
-        // Match the typed receiver against the known RECEIVERS list to get a
-        // real-looking VPA; otherwise slugify the typed name as a fallback.
-        const matchedReceiver = RECEIVERS.find(r => r.name.toLowerCase() === receiver.toLowerCase());
-        const receiverVpa = matchedReceiver?.upi ?? (receiver.toLowerCase().replace(/\s+/g, "") + "@upi");
+        // The receiver <select> stores the VPA as its value (not the name),
+        // so match against `upi`, not `name`, to correctly detect known payees.
+        const matchedReceiver = RECEIVERS.find(r => r.upi === receiver);
+        const receiverName = matchedReceiver?.name ?? receiver;
+        const receiverVpa = receiver;
 
         const payload = {
           device_id: "demo-device-001",
@@ -559,7 +588,7 @@ function PaymentPage({ onGoAnalysis }: { onGoAnalysis: (txn: typeof TRANSACTIONS
 
           sender_name: senderName,
           sender_vpa: senderVpa,
-          receiver_name: receiver,
+          receiver_name: receiverName,
           receiver_vpa: receiverVpa,
           transaction_type: "P2P",
         };
@@ -589,12 +618,15 @@ function PaymentPage({ onGoAnalysis }: { onGoAnalysis: (txn: typeof TRANSACTIONS
           })
           .catch((err) => {
             console.error("Fraud check failed:", err);
-            // Fallback so the demo doesn't visibly break if the backend
-            // isn't running — clearly marked as a fallback, not real data.
-            const score = amt > 50000 ? 94 : amt > 10000 ? 67 : 12;
-            const status: TxStatus = score >= 75 ? "Blocked" : score >= 45 ? "Flagged" : "Allowed";
-            const txnId = "TXN-" + Math.floor(800000 + Math.random() * 99999);
-            setResult({ status, score, latency: "offline-fallback", txnId });
+            // No fake data - if the backend is unreachable, say so honestly
+            // instead of fabricating a score.
+            setResult({
+              status: "Flagged",
+              score: 0,
+              latency: "n/a",
+              txnId: "N/A",
+              error: "Could not reach the fraud detection backend. Is it running on " + API_URL + "?",
+            });
             setPayState("result");
           });
       }
@@ -643,6 +675,27 @@ function PaymentPage({ onGoAnalysis }: { onGoAnalysis: (txn: typeof TRANSACTIONS
       Blocked: { bg: "bg-red-50 dark:bg-red-900/20",         border: "border-red-300 dark:border-red-700",         icon: <Lock size={32} className="text-red-600 dark:text-red-400" />,              text: "text-red-700 dark:text-red-300",       label: "Transaction Blocked",   sub: "High fraud risk. Payment has been blocked automatically." },
     }[result.status];
 
+    if (result.error) {
+      return (
+        <div className="flex items-center justify-center min-h-[500px]">
+          <Card className="w-full max-w-md p-8">
+            <div className="rounded-2xl border-2 p-6 text-center mb-5 bg-red-50 dark:bg-red-900/20 border-red-300 dark:border-red-700">
+              <div className="flex justify-center mb-3"><ShieldAlert size={32} className="text-red-600 dark:text-red-400" /></div>
+              <p className="text-xl font-black text-red-700 dark:text-red-300">CONNECTION ERROR</p>
+              <p className="text-sm font-semibold mt-0.5 text-red-700 dark:text-red-300">Backend Unreachable</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{result.error}</p>
+            </div>
+            <button
+              onClick={() => setPayState("idle")}
+              className="w-full py-3 rounded-xl bg-slate-800 dark:bg-slate-700 text-white font-semibold text-sm"
+            >
+              Try Again
+            </button>
+          </Card>
+        </div>
+      );
+    }
+
     return (
       <div className="flex items-center justify-center min-h-[500px]">
         <Card className="w-full max-w-md p-8">
@@ -679,14 +732,14 @@ function PaymentPage({ onGoAnalysis }: { onGoAnalysis: (txn: typeof TRANSACTIONS
             <button
               onClick={() => {
                 const [senderName, senderVpa] = sender.split("•").map(s => s.trim());
-                const matchedReceiver = RECEIVERS.find(r => r.name.toLowerCase() === receiver.toLowerCase());
-                const receiverVpa = matchedReceiver?.upi ?? (receiver.toLowerCase().replace(/\s+/g, "") + "@upi");
+                const matchedReceiver = RECEIVERS.find(r => r.upi === receiver);
+                const receiverName = matchedReceiver?.name ?? receiver;
                 const synth = {
                   id: result.txnId,
                   sender: senderName,
                   sUPI: senderVpa,
-                  receiver,
-                  rUPI: receiverVpa,
+                  receiver: receiverName,
+                  rUPI: receiver,
                   amount: parseFloat(amount),
                   time: new Date().toLocaleTimeString("en-IN", { hour12: false }),
                   status: result.status,
@@ -827,11 +880,19 @@ function PaymentPage({ onGoAnalysis }: { onGoAnalysis: (txn: typeof TRANSACTIONS
 // SCREEN 3 — LIVE TRANSACTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 function LivePage({ onSelect }: { onSelect: (t: typeof TRANSACTIONS[0]) => void }) {
-  const TRANSACTIONS = useLiveTransactions();
+  const { data: TRANSACTIONS, offline } = useLiveTransactions();
   const [filter, setFilter] = useState("All");
-  const [tick, setTick] = useState(0);
-  useEffect(() => { const iv = setInterval(() => setTick(v => v + 1), 3000); return () => clearInterval(iv); }, []);
   const filtered = filter === "All" ? TRANSACTIONS : TRANSACTIONS.filter(t => t.status === filter);
+
+  if (offline) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center gap-2">
+        <ShieldAlert size={40} className="text-amber-500" />
+        <p className="text-slate-600 dark:text-slate-300 font-semibold">Backend not reachable</p>
+        <p className="text-sm text-slate-400 dark:text-slate-500">Start the API server to see the live feed.</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -843,7 +904,7 @@ function LivePage({ onSelect }: { onSelect: (t: typeof TRANSACTIONS[0]) => void 
         <div className="flex items-center gap-2">
           <span className="flex items-center gap-1.5 bg-emerald-50 dark:bg-emerald-900/25 border border-emerald-200 dark:border-emerald-800 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            {284391 + tick} processed
+            {TRANSACTIONS.length} processed
           </span>
           <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-white/[0.08] text-xs font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
             <Download size={12} /> Export
@@ -919,13 +980,32 @@ function LivePage({ onSelect }: { onSelect: (t: typeof TRANSACTIONS[0]) => void 
 // SCREEN 4 — TRANSACTION ANALYSIS
 // ═══════════════════════════════════════════════════════════════════════════════
 function AnalysisPage({ selected: ext }: { selected: typeof TRANSACTIONS[0] | null }) {
-  const TRANSACTIONS = useLiveTransactions();
-  const [selected, setSelected] = useState<typeof TRANSACTIONS[0]>(ext ?? TRANSACTIONS[0]);
+  const { data: TRANSACTIONS, offline } = useLiveTransactions();
+  const [selected, setSelected] = useState<typeof TRANSACTIONS[0] | null>(ext ?? TRANSACTIONS[0] ?? null);
   useEffect(() => { if (ext) setSelected(ext); }, [ext]);
-  useEffect(() => { if (!ext) setSelected(TRANSACTIONS[0]); }, [TRANSACTIONS]);
+  useEffect(() => { if (!ext) setSelected(TRANSACTIONS[0] ?? null); }, [TRANSACTIONS]);
 
   const { isDark } = useDark();
   const t = selected;
+
+  if (offline) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center gap-2">
+        <ShieldAlert size={40} className="text-amber-500" />
+        <p className="text-slate-600 dark:text-slate-300 font-semibold">Backend not reachable</p>
+      </div>
+    );
+  }
+
+  if (!t) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center gap-2">
+        <Activity size={40} className="text-slate-300 dark:text-slate-600" />
+        <p className="text-slate-600 dark:text-slate-300 font-semibold">No transaction to analyse yet</p>
+        <p className="text-sm text-slate-400 dark:text-slate-500">Send a payment first, then click "View Analysis".</p>
+      </div>
+    );
+  }
 
   const rules = [
     { name: "Velocity Check",          result: t.score > 80 ? "Failed" : t.score > 50 ? "Warning" : "Passed", detail: t.score > 80 ? "7 txns in 10 min (limit: 3)" : "Within normal range" },
@@ -1334,7 +1414,7 @@ function AnalyticsPage() {
 // SCREEN 7 — FRAUD ALERTS
 // ═══════════════════════════════════════════════════════════════════════════════
 function AlertsPage({ onAnalyse }: { onAnalyse: (t: typeof TRANSACTIONS[0]) => void }) {
-  const TRANSACTIONS = useLiveTransactions();
+  const { data: TRANSACTIONS, offline } = useLiveTransactions();
   // Real alerts: any transaction that wasn't cleanly Allowed. Replaces the
   // old static ALERTS array so this list reflects actual flagged/blocked
   // activity from the backend rather than fixed demo incidents.
@@ -1353,6 +1433,15 @@ function AlertsPage({ onAnalyse }: { onAnalyse: (t: typeof TRANSACTIONS[0]) => v
       action: t.status,
     }));
 
+  if (offline) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center gap-2">
+        <ShieldAlert size={40} className="text-amber-500" />
+        <p className="text-slate-600 dark:text-slate-300 font-semibold">Backend not reachable</p>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -1364,6 +1453,14 @@ function AlertsPage({ onAnalyse }: { onAnalyse: (t: typeof TRANSACTIONS[0]) => v
           {activeAlerts.length} Active
         </span>
       </div>
+
+      {activeAlerts.length === 0 && (
+        <div className="flex flex-col items-center justify-center py-16 text-center gap-2">
+          <ShieldCheck size={36} className="text-emerald-400" />
+          <p className="text-slate-600 dark:text-slate-300 font-semibold">No active alerts</p>
+          <p className="text-sm text-slate-400 dark:text-slate-500">Flagged or blocked transactions will appear here.</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {activeAlerts.map(a => {
@@ -1525,7 +1622,7 @@ export default function App() {
     setPage("analysis");
   };
 
-  const pages: Record<string, JSX.Element> = {
+  const pages: Record<string, React.ReactNode> = {
     dashboard: <DashboardPage key={refresh} />,
     payment:   <PaymentPage onGoAnalysis={navigateToAnalysis} />,
     live:      <LivePage onSelect={navigateToAnalysis} />,
